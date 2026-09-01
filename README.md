@@ -16,7 +16,13 @@ npm install
 npm run db:up        # postgres 16 in a container on :55432
 npm run db:migrate
 npm start            # listens on :3000
+npm run seed         # creates an auction, prints runnable curl commands
 ```
+
+`npm run seed` is there because the brief only asks for `POST /bid`, so there is
+no endpoint that creates an auction. It prints seven ready-to-paste requests that
+walk the whole design — an accepted bid, the same request retried and replayed, a
+refusal, a self-raise, a key conflict, and a rejected fractional amount.
 
 ```bash
 npm test             # the whole suite, ~65 tests
@@ -34,9 +40,21 @@ POST /bid
   "auction_id":      "uuid",
   "user_id":         "uuid",
   "amount":          15000,        // integer minor units, never a float
-  "idempotency_key": "any string"  // see "What I would change" below
+  "idempotency_key": "any string"  // OPTIONAL — see below
 }
 ```
+
+**`idempotency_key` is optional.** The brief specifies a body of `auction_id`,
+`user_id` and `amount`, and that exact request works — requiring a field the brief
+does not mention would be rejecting the contract as written. When the key is absent
+the request's own fingerprint becomes the key, so an identical resend still replays
+rather than being re-judged.
+
+That fallback is deliberately weaker than a real key, and the gap is the argument
+for having one: without a key, a *deliberate* resend of the same amount is
+byte-identical to a network retry, so it replays too — a stale answer where a fresh
+refusal was correct. Nothing closes that gap except the client telling us which
+request it meant. See "What I would change about this brief".
 
 | Status | When |
 |---|---|
@@ -62,6 +80,24 @@ status line.
 Outcomes: `ACCEPTED_LEADING`, `ACCEPTED_SELF_RAISE`, `REJECTED_NOT_HIGHER`,
 `REJECTED_BELOW_INCREMENT`, `REJECTED_AUCTION_CLOSED`.
 
+### Seven requests that exercise the whole design
+
+`npm run seed` prints these against a real auction id. Verbatim output:
+
+```
+1  Alice bids 500.00      {"seq":1,"outcome":"ACCEPTED_LEADING","currentTopCents":50000,"replayed":false}    201
+2  the same request again {"seq":1,"outcome":"ACCEPTED_LEADING","currentTopCents":50000,"replayed":true}     201
+3  Bob bids 400.00        {"seq":null,"outcome":"REJECTED_NOT_HIGHER","currentTopCents":50000}               200
+4  Bob bids 600.00        {"seq":2,"outcome":"ACCEPTED_LEADING","currentTopCents":60000}                     201
+5  Bob raises himself     {"seq":3,"outcome":"ACCEPTED_SELF_RAISE","currentTopCents":70000}                  201
+6  same key, new amount   {"error":"idempotency_key_reused"}                                                 409
+7  amount 1.5             {"error":"invalid_amount"}                                                         400
+```
+
+Request 2 is the one worth looking at: it carries no idempotency key, is
+byte-identical to request 1, and comes back as a replay of the original decision
+rather than a fresh judgement.
+
 ---
 
 ## Data model, and why
@@ -75,6 +111,16 @@ auctions   id, status, ends_at, currency, reserve_cents, min_increment_cents,
 bids       id, auction_id, seq, user_id, amount_cents, outcome,
            idem_key, request_hash, response_body, created_at
 ```
+
+Three columns are deliberately carried but unread: `reserve_cents`, `max_cents` and
+`proxy_enabled`. The reserve gates whether a lot *sells*, which is settlement and out
+of scope here — it is not a bid rule, and treating it as one would break the
+self-raise reasoning below. The other two reserve the shape of proxy bidding so
+enabling it is a feature flag rather than a migration. They are listed here so their
+absence from the logic reads as a decision rather than an oversight.
+
+The migrations are append-only; `002` and `003` exist because the design changed
+during the build rather than being edited into `001` after the fact.
 
 **The auction row carries denormalised current-top state and its own sequence
 counter so that accepting a bid is a single atomic conditional update on one row
@@ -161,6 +207,9 @@ is spent, at which point the stored response is returned verbatim.
 
 - **Same key, same request** → the original response, replayed exactly.
 - **Same key, different amount** → `409`, no state change.
+- **No key at all** → the request fingerprint is the key, so a retry still replays.
+  A deliberate resend of the same amount replays too, which is wrong but unfixable
+  without the client distinguishing the two.
 - `response_body` is built *inside* the accepting statement from the state at the
   moment of the decision, so a replay answers with the price as it stood then
   rather than re-deriving it against a world that has moved on.
@@ -221,10 +270,16 @@ network retry from a deliberate second submission of the same figure — they ar
 byte-identical.
 
 Deduplicating on that triple alone is *almost* sound: once a user's 110 wins, no
-later 110 can ever be strictly higher, so the triple can only succeed once. But
-it conflates a retry with an intentional re-send and returns stale responses.
-**I added `idempotency_key` to the request rather than pretend the spec supports
-it.** That is the one deviation from the stated contract in this repo.
+later 110 can ever be strictly higher, so the triple can only succeed once. But it
+conflates a retry with an intentional re-send and returns stale responses.
+
+Rather than argue this in prose, the code does both. **The brief's exact three-field
+request works and is retry-safe**, deduplicating on the request fingerprint. Supply
+an `idempotency_key` and you get the stronger guarantee. The difference between them
+is the whole point: with the fallback, a bidder who deliberately re-sends 110 after
+being outbid gets their old "accepted" response replayed instead of a refusal,
+because those two requests are byte-identical. Only the client knows which it meant.
+**Change: add `idempotency_key` to the body, or an `Idempotency-Key` header.**
 
 **2. `user_id` in the request body is an authorization hole.** In production the
 bidder's identity must come from the authenticated principal, never a

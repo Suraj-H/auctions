@@ -34,9 +34,13 @@ export function parseBidRequest(body) {
     return fail('invalid_amount', 'amount must be a positive whole number of minor units');
   }
 
-  if (typeof idemKey !== 'string' || idemKey.length === 0 || idemKey.length > MAX_KEY_LENGTH) {
+  // Optional. The brief defines the body as auction_id, user_id and amount, so
+  // requiring a field it does not mention would reject the contract as written.
+  // Absent means null here and the repository derives a key from the request.
+  if (idemKey !== undefined &&
+      (typeof idemKey !== 'string' || idemKey.length === 0 || idemKey.length > MAX_KEY_LENGTH)) {
     return fail('invalid_idempotency_key', `idempotency_key must be 1 to ${MAX_KEY_LENGTH} characters`);
   }
 
-  return { ok: true, value: { auctionId, userId, amountCents: amount, idemKey } };
+  return { ok: true, value: { auctionId, userId, amountCents: amount, idemKey: idemKey ?? null } };
 }

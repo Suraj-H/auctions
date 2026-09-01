@@ -115,3 +115,13 @@ test('a body over the size limit answers 413, not 500', async () => {
   assert.equal(response.status, 413);
   assert.equal((await response.json()).error, 'body_too_large');
 });
+
+test("the brief's exact three fields are accepted over HTTP", async () => {
+  const auction = await createAuction(pool);
+  const response = await postBid({
+    auction_id: auction.id, user_id: newUserId(), amount: 15000,
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal((await response.json()).outcome, 'ACCEPTED_LEADING');
+});

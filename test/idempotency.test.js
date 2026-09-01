@@ -107,3 +107,30 @@ test('concurrent retries of one bid produce exactly one ledger row', async () =>
   assert.equal(settled.filter((r) => !r.replayed).length, 1, 'exactly one attempt is the original');
   assert.ok(settled.every((r) => r.seq === settled[0].seq));
 });
+
+test("a retry without a key still replays — the brief's contract is retry-safe", async () => {
+  // With no client key, the request fingerprint is the key. That makes an
+  // identical resend indistinguishable from a retry, and it replays. Which is
+  // correct for a timeout, and is exactly the limitation that makes an explicit
+  // key worth asking for: a deliberate resend of the same amount replays too.
+  const auction = await createAuction(pool);
+  const bid = { auctionId: auction.id, userId: newUserId(), amountCents: 5000 };
+
+  const first = await repo.placeBid(bid);
+  const retry = await repo.placeBid(bid);
+
+  assert.equal(first.replayed, false);
+  assert.equal(retry.replayed, true);
+  assert.equal(retry.seq, first.seq);
+  assert.equal(await countBids(auction.id), 1);
+});
+
+test('an explicit key and a derived key are different bids', async () => {
+  const auction = await createAuction(pool);
+  const userId = newUserId();
+  await repo.placeBid({ auctionId: auction.id, userId, amountCents: 5000 });
+  const second = await repo.placeBid({ auctionId: auction.id, userId, amountCents: 9000, idemKey: 'k1' });
+
+  assert.equal(second.replayed, false);
+  assert.equal(await countBids(auction.id), 2);
+});

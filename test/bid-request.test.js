@@ -10,6 +10,17 @@ const VALID = {
 };
 const withField = (k, v) => ({ ...VALID, [k]: v });
 
+test('the brief\'s exact contract is accepted — idempotency_key is optional', () => {
+  // The brief defines the body as auction_id, user_id, amount. Requiring a key
+  // we invented would reject the contract as written, so an absent key is
+  // valid and the repository derives one from the request itself.
+  const { auction_id, user_id, amount } = VALID;
+  assert.deepEqual(parseBidRequest({ auction_id, user_id, amount }), {
+    ok: true,
+    value: { auctionId: auction_id, userId: user_id, amountCents: amount, idemKey: null },
+  });
+});
+
 test('a well-formed request maps onto the internal shape', () => {
   assert.deepEqual(parseBidRequest(VALID), {
     ok: true,
@@ -33,7 +44,6 @@ const REJECTED = [
   ['a malformed auction id',     withField('auction_id', 'not-a-uuid'), 'invalid_auction_id'],
   ['a missing auction id',       withField('auction_id', undefined),  'invalid_auction_id'],
   ['a malformed user id',        withField('user_id', 'nope'),        'invalid_user_id'],
-  ['a missing idempotency key',  withField('idempotency_key', undefined), 'invalid_idempotency_key'],
   ['an empty idempotency key',   withField('idempotency_key', ''),    'invalid_idempotency_key'],
   ['a non-object body',          'nonsense',                          'invalid_body'],
   ['a null body',                null,                                'invalid_body'],

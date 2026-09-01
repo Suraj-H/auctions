@@ -106,13 +106,23 @@ SELECT response_body, request_hash FROM bids
 
 export function atomicRepository(pool) {
   return {
-    async placeBid({ auctionId, userId, amountCents, idemKey }) {
-      if (!idemKey) throw new TypeError('idemKey is required to make a bid retryable');
+    async placeBid({ auctionId, userId, amountCents, idemKey = null }) {
       const requestHash = bidFingerprint(auctionId, userId, amountCents);
+
+      // Without a client-supplied key the request fingerprint becomes the key,
+      // so the contract the brief actually specifies is still retry-safe: an
+      // identical resend collides and replays instead of being re-judged.
+      //
+      // It is strictly weaker than a real key, and that is the point. A
+      // deliberate resend of the same amount is byte-identical to a retry, so
+      // it replays too — a stale answer where a fresh refusal was correct. That
+      // gap is unclosable without a key, which is why the readme argues the
+      // brief should carry one.
+      const key = idemKey ?? `derived:${requestHash.toString('hex')}`;
 
       let rows;
       try {
-        ({ rows } = await pool.query(PLACE_BID, [auctionId, userId, amountCents, idemKey, requestHash]));
+        ({ rows } = await pool.query(PLACE_BID, [auctionId, userId, amountCents, key, requestHash]));
       } catch (error) {
         if (error.code !== UNIQUE_VIOLATION) throw error;
         // The key is already spent. Nothing was written: the INSERT and the
@@ -120,7 +130,7 @@ export function atomicRepository(pool) {
         // the auction back with it. This is why the index has to be allowed to
         // raise — ON CONFLICT DO NOTHING would let the UPDATE stand while the
         // ledger dropped the row.
-        return replayStoredAttempt(pool, { auctionId, userId, idemKey, requestHash });
+        return replayStoredAttempt(pool, { auctionId, userId, idemKey: key, requestHash });
       }
 
       if (rows.length === 0) throw new AuctionNotFoundError(auctionId);
