@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createPool } from '../src/db.js';
 import { resolve } from '../src/resolver.js';
 import { atomicRepository } from '../src/repository.js';
+import { randomUUID } from 'node:crypto';
 import { createAuctionInState, newUserId } from './support/db.js';
 
 /**
@@ -47,7 +48,7 @@ for (const c of CASES) {
     const userId = c.self ? topUserId : newUserId();
 
     const fromSql = await atomicRepository(pool).placeBid({
-      auctionId: auction.id, userId, amountCents: c.amount,
+      auctionId: auction.id, userId, amountCents: c.amount, idemKey: randomUUID(),
     });
 
     const fromResolver = resolve(

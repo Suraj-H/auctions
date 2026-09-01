@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readAuction, readAcceptedBids, newUserId } from './db.js';
 
 const isAccepted = (outcome) => outcome?.startsWith('ACCEPTED');
@@ -12,6 +13,7 @@ export async function stormAuction(repository, auctionId, { count = 200, startCe
   const attempts = Array.from({ length: count }, (_, i) => ({
     userId: newUserId(),
     amountCents: startCents + i * 100,
+    idemKey: randomUUID(),
   }));
 
   const settled = await Promise.allSettled(

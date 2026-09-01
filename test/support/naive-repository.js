@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import { resolve } from '../../src/resolver.js';
-import { hashOf } from '../../src/repository.js';
+import { bidFingerprint } from '../../src/repository.js';
 
 /**
  * A CONTROL, not an implementation. Never imported by src/.
@@ -15,7 +14,7 @@ import { hashOf } from '../../src/repository.js';
  */
 export function naiveRepository(pool) {
   return {
-    async placeBid({ auctionId, userId, amountCents }) {
+    async placeBid({ auctionId, userId, amountCents, idemKey }) {
       const { rows } = await pool.query('SELECT * FROM auctions WHERE id = $1', [auctionId]);
       const auction = rows[0];
 
@@ -35,8 +34,7 @@ export function naiveRepository(pool) {
         new Date(),
       );
 
-      const idemKey = randomUUID();
-      const hash = hashOf({ auctionId, userId, amountCents });
+      const hash = bidFingerprint(auctionId, userId, amountCents);
 
       if (!decision.newState) {
         await pool.query(
