@@ -1,7 +1,5 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
-export const hashOf = (payload) =>
-  createHash('sha256').update(JSON.stringify(payload)).digest();
 
 /** An open auction with no bids, ending far enough away to be irrelevant. */
 export async function createAuction(pool, over = {}) {
@@ -32,3 +30,20 @@ export async function readAcceptedBids(pool, auctionId) {
 }
 
 export const newUserId = () => randomUUID();
+
+/**
+ * An auction pinned to an exact state, for driving the decision table.
+ * top_bid_is_whole means the three top-bid columns move together or not at all.
+ */
+export async function createAuctionInState(pool, { topAmountCents, topUserId, minIncrementCents, endsInMs, status = 'OPEN' }) {
+  const hasTopBid = topAmountCents > 0;
+  const { rows } = await pool.query(
+    `INSERT INTO auctions (status, ends_at, min_increment_cents,
+                           top_amount_cents, top_user_id, top_bid_at)
+     VALUES ($1, now() + make_interval(secs => $2), $3, $4, $5, CASE WHEN $6 THEN now() END)
+     RETURNING *`,
+    [status, endsInMs / 1000, minIncrementCents,
+     topAmountCents, hasTopBid ? topUserId : null, hasTopBid],
+  );
+  return rows[0];
+}

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from '../../src/resolver.js';
-import { hashOf } from './db.js';
+import { hashOf } from '../../src/repository.js';
 
 /**
  * A CONTROL, not an implementation. Never imported by src/.
@@ -15,8 +15,6 @@ import { hashOf } from './db.js';
  */
 export function naiveRepository(pool) {
   return {
-    name: 'naive read-then-write',
-
     async placeBid({ auctionId, userId, amountCents }) {
       const { rows } = await pool.query('SELECT * FROM auctions WHERE id = $1', [auctionId]);
       const auction = rows[0];
