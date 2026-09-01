@@ -76,3 +76,43 @@ export async function auditLedger(pool, auctionId, storm) {
 
   return { violations, finalTop, acceptedOnDisk: ledger.length };
 }
+
+/**
+ * Keep bidding for a fixed duration rather than firing a fixed burst.
+ *
+ * A burst finishes as fast as the machine allows, so anything timed against it
+ * — like closing the auction part-way through — lands at an unpredictable point
+ * and can miss entirely. A stream runs for a wall-clock duration instead: a slow
+ * machine simply places fewer bids, but traffic is still flowing at any instant
+ * inside the window. That is what makes a mid-flight close testable.
+ */
+export async function streamBids(
+  repository, auctionId, { durationMs = 900, concurrency = 40, startCents = 1000 } = {},
+) {
+  const deadline = Date.now() + durationMs;
+  const results = [];
+  let nth = 0;
+
+  const worker = async () => {
+    while (Date.now() < deadline) {
+      const attempt = {
+        userId: newUserId(),
+        amountCents: startCents + nth++ * 100,
+        idemKey: randomUUID(),
+      };
+      try {
+        const { outcome } = await repository.placeBid({ auctionId, ...attempt });
+        results.push({ ...attempt, outcome, error: null });
+      } catch (error) {
+        results.push({ ...attempt, outcome: null, error });
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return {
+    results,
+    accepted: results.filter((r) => isAccepted(r.outcome)),
+    writeErrors: results.filter((r) => r.error),
+  };
+}

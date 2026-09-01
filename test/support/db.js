@@ -47,3 +47,22 @@ export async function createAuctionInState(pool, { topAmountCents, topUserId, mi
   );
   return rows[0];
 }
+
+/** Resolves once `n` bids have actually been accepted on the auction. */
+export async function waitForAcceptedBids(pool, auctionId, n, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { rows } = await pool.query(
+      'SELECT count(*)::int AS n FROM bids WHERE auction_id = $1 AND seq IS NOT NULL',
+      [auctionId],
+    );
+    if (rows[0].n >= n) return rows[0].n;
+    if (Date.now() > deadline) throw new Error(`only ${rows[0].n} of ${n} bids accepted in ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** Brings an auction's deadline forward to now, closing it where it stands. */
+export async function closeNow(pool, auctionId) {
+  await pool.query('UPDATE auctions SET ends_at = clock_timestamp() WHERE id = $1', [auctionId]);
+}

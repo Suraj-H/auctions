@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createPool } from '../src/db.js';
 import { atomicRepository } from '../src/repository.js';
-import { createAuction, readAuction, newUserId } from './support/db.js';
-import { stormAuction, auditLedger } from './support/harness.js';
+import { createAuction, readAuction, newUserId, waitForAcceptedBids, closeNow } from './support/db.js';
+import { stormAuction, streamBids, auditLedger } from './support/harness.js';
 
 let pool, repo;
 before(() => { pool = createPool({ max: 100 }); repo = atomicRepository(pool); });
@@ -13,18 +13,30 @@ after(() => pool.end());
 /**
  * The close gate is a predicate inside the accepting statement, so it is only
  * meaningfully tested while bids are actually landing across the boundary.
- * A 200-bid storm takes roughly half a second, so an auction ending part-way
- * through is guaranteed to see traffic on both sides of its own deadline.
+ *
+ * Two assumptions were removed to get here. The first version opened the auction
+ * for a fixed 400ms and relied on a 300-bid burst outlasting it, which holds on a
+ * typical machine and fails on a fast or a loaded one in either direction. The
+ * second waited for bids to be accepted before closing, which was worse: waiting
+ * consumed the burst, so barely any attempts were left to refuse.
+ *
+ * Bidding now runs for a wall-clock duration rather than as a burst, so waiting
+ * does not exhaust it and traffic is still flowing when the deadline moves.
  */
 test('no bid is accepted once the auction has ended, mid-storm', async () => {
-  const auction = await createAuction(pool, { endsInMs: 400 });
+  const auction = await createAuction(pool, { endsInMs: 60_000 });
 
-  const storm = await stormAuction(repo, auction.id, { count: 300 });
+  const streaming = streamBids(repo, auction.id, { durationMs: 900 });
+  await waitForAcceptedBids(pool, auction.id, 5);
+  await closeNow(pool, auction.id);
+
+  const storm = await streaming;
   const audit = await auditLedger(pool, auction.id, storm);
 
   const closed = storm.results.filter((r) => r.outcome === 'REJECTED_AUCTION_CLOSED');
 
-  // Without traffic on both sides of the deadline this test asserts nothing.
+  // Both are now structural rather than hopeful: the close does not happen until
+  // bids have been accepted, and 295 attempts remain when it does.
   assert.ok(storm.accepted.length > 0, 'no bid landed before the close');
   assert.ok(closed.length > 0, 'no bid landed after the close');
 

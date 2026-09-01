@@ -72,6 +72,7 @@ except the client saying which it meant.
 | `404` | No such auction |
 | `409` | Idempotency key reused for a different bid |
 | `413` | Body over the size limit |
+| `500` | Unhandled server error — logged server-side, never leaks internals |
 
 Status codes carry transport semantics only. A refused bid is a request that was
 processed successfully and answered "no", so it is a `200` with the reason in the
@@ -114,7 +115,8 @@ Two tables. `auctions` carries current state; `bids` carries history.
 
 ```
 auctions   id, status, ends_at, currency, reserve_cents, min_increment_cents,
-           seq, top_amount_cents, top_user_id, top_bid_at, previous_top_user_id
+           seq, top_amount_cents, top_user_id, top_bid_at, previous_top_user_id,
+           max_cents, proxy_enabled, created_at
 
 bids       id, auction_id, seq, user_id, amount_cents, outcome,
            idem_key, request_hash, response_body, created_at
