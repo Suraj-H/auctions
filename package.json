@@ -3,9 +3,18 @@
   "version": "1.0.0",
   "description": "Auction bidding service - POST /bid",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test test/",
-    "test:unit": "node --test test/resolver.test.js"
+    "test:unit": "node --test test/resolver.test.js",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down -v",
+    "db:migrate": "node scripts/migrate.js",
+    "db:reset": "npm run db:down && npm run db:up && npm run db:migrate"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
   }
 }
