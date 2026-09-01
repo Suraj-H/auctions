@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readAuction, readAcceptedBids, newUserId } from './db.js';
-
-const isAccepted = (outcome) => outcome?.startsWith('ACCEPTED');
+import { isAccepted } from '../../src/resolver.js';
 
 /**
  * Fire `count` bids at one auction as concurrently as the pool allows, each

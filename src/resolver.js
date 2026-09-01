@@ -53,3 +53,12 @@ export function resolve(auction, bid, now) {
     },
   };
 }
+
+const ACCEPTED = new Set([OUTCOMES.ACCEPTED_LEADING, OUTCOMES.ACCEPTED_SELF_RAISE]);
+
+/**
+ * Derived from OUTCOMES rather than a startsWith('ACCEPTED') prefix check, so
+ * renaming an outcome breaks loudly here instead of silently reclassifying
+ * every accepted bid as a refusal.
+ */
+export const isAccepted = (outcome) => ACCEPTED.has(outcome);
