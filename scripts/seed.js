@@ -22,10 +22,13 @@ try {
   const alice = randomUUID();
   const bob = randomUUID();
 
+  // The body is exactly what the brief specifies. The retry key, when there is
+  // one, rides in the Idempotency-Key header — it describes the delivery of the
+  // request, not the bid.
   const bid = (user, amount, key) =>
-    `curl -s -X POST localhost:${port}/bid -H 'content-type: application/json' -d '` +
-    JSON.stringify({ auction_id: auction.id, user_id: user, amount, ...(key && { idempotency_key: key }) }) +
-    `'`;
+    `curl -s -X POST localhost:${port}/bid -H 'content-type: application/json'` +
+    (key ? ` -H 'Idempotency-Key: ${key}'` : '') +
+    ` -d '${JSON.stringify({ auction_id: auction.id, user_id: user, amount })}'`;
 
   console.log(`
 auction   ${auction.id}

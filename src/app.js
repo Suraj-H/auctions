@@ -19,7 +19,7 @@ export function createApp({ repository }) {
   app.use(express.json({ limit: '4kb' }));
 
   app.post('/bid', async (req, res) => {
-    const parsed = parseBidRequest(req.body);
+    const parsed = parseBidRequest(req.body, req.get('Idempotency-Key'));
     if (!parsed.ok) {
       return res.status(400).json({ error: parsed.error, message: parsed.message });
     }

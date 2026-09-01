@@ -36,25 +36,33 @@ database. The rest do.
 
 ```
 POST /bid
+Idempotency-Key: any-string        # optional, see below
+
 {
-  "auction_id":      "uuid",
-  "user_id":         "uuid",
-  "amount":          15000,        // integer minor units, never a float
-  "idempotency_key": "any string"  // OPTIONAL — see below
+  "auction_id": "uuid",
+  "user_id":    "uuid",
+  "amount":     15000              # integer minor units, never a float
 }
 ```
 
-**`idempotency_key` is optional.** The brief specifies a body of `auction_id`,
-`user_id` and `amount`, and that exact request works — requiring a field the brief
-does not mention would be rejecting the contract as written. When the key is absent
-the request's own fingerprint becomes the key, so an identical resend still replays
-rather than being re-judged.
+**The body is exactly what the brief specifies** — `auction_id`, `user_id`, `amount`
+and nothing else. That request works as written.
 
-That fallback is deliberately weaker than a real key, and the gap is the argument
-for having one: without a key, a *deliberate* resend of the same amount is
-byte-identical to a network retry, so it replays too — a stale answer where a fresh
-refusal was correct. Nothing closes that gap except the client telling us which
-request it meant. See "What I would change about this brief".
+**The retry key is an optional `Idempotency-Key` header**, following
+[draft-ietf-httpapi-idempotency-key-header](https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-07)
+and Stripe's convention. It belongs in a header rather than the payload because it
+describes how to treat the *delivery* of this request, not what is being bid — the
+same reason idempotency is resolved before any bid rule runs. Sending it in the body
+is refused with a `400` rather than ignored, so a caller never believes they hold a
+guarantee they do not. The draft types the value as a quoted structured string while
+everyone sends it bare, so `"k1"` and `k1` are normalised to the same key.
+
+**With no header at all**, the request's own fingerprint becomes the key, so an
+identical resend still replays instead of being re-judged. That fallback is
+deliberately weaker, and the gap is the argument for the header: without a key a
+*deliberate* resend of the same amount is byte-identical to a network retry, so it
+replays too — a stale answer where a fresh refusal was correct. Nothing closes that
+except the client saying which it meant.
 
 | Status | When |
 |---|---|
@@ -207,9 +215,11 @@ is spent, at which point the stored response is returned verbatim.
 
 - **Same key, same request** → the original response, replayed exactly.
 - **Same key, different amount** → `409`, no state change.
-- **No key at all** → the request fingerprint is the key, so a retry still replays.
-  A deliberate resend of the same amount replays too, which is wrong but unfixable
-  without the client distinguishing the two.
+- **No `Idempotency-Key` header** → the request fingerprint becomes the key, so a
+  retry still replays. A deliberate resend of the same amount replays too, which is
+  wrong but unfixable without the client distinguishing the two.
+- **Key sent in the body** → `400` naming the header. Ignoring it would leave the
+  caller believing they chose a guarantee they did not get.
 - `response_body` is built *inside* the accepting statement from the state at the
   moment of the decision, so a replay answers with the price as it stood then
   rather than re-deriving it against a world that has moved on.
@@ -274,12 +284,18 @@ later 110 can ever be strictly higher, so the triple can only succeed once. But 
 conflates a retry with an intentional re-send and returns stale responses.
 
 Rather than argue this in prose, the code does both. **The brief's exact three-field
-request works and is retry-safe**, deduplicating on the request fingerprint. Supply
-an `idempotency_key` and you get the stronger guarantee. The difference between them
-is the whole point: with the fallback, a bidder who deliberately re-sends 110 after
-being outbid gets their old "accepted" response replayed instead of a refusal,
-because those two requests are byte-identical. Only the client knows which it meant.
-**Change: add `idempotency_key` to the body, or an `Idempotency-Key` header.**
+body works and is retry-safe**, deduplicating on the request fingerprint. Send an
+`Idempotency-Key` header and you get the stronger guarantee. The difference is the
+whole point: with the fallback, a bidder who deliberately re-sends 110 after being
+outbid gets their old "accepted" response replayed instead of a refusal, because
+those two requests are byte-identical. Only the client knows which it meant.
+
+**Change: specify an `Idempotency-Key` request header.** Note this needs no change
+to the body the brief defines — the gap is not in the payload, it is that the brief
+specifies a payload and says nothing about the protocol. The key is delivery
+metadata, not bid data, which is why it goes in a header and why
+[the IETF draft](https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-07)
+puts it there.
 
 **2. `user_id` in the request body is an authorization hole.** In production the
 bidder's identity must come from the authenticated principal, never a

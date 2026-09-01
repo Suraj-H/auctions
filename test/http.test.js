@@ -17,18 +17,18 @@ before(async () => {
 });
 after(async () => { server.close(); await pool.end(); });
 
-const postBid = (body, raw = false) =>
+const postBid = (body, { raw = false, key } = {}) =>
   fetch(`${baseUrl}/bid`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(key && { 'Idempotency-Key': key }) },
     body: raw ? body : JSON.stringify(body),
   });
 
+// Exactly the brief's body. The retry key rides in a header, not in here.
 const bidBody = (auctionId, over = {}) => ({
   auction_id: auctionId,
   user_id: newUserId(),
   amount: 15000,
-  idempotency_key: randomUUID(),
   ...over,
 });
 
@@ -56,9 +56,10 @@ test('a refused bid answers 200 — it was processed, not rejected as a request'
 test('a retried bid answers with the original result, marked as a replay', async () => {
   const auction = await createAuction(pool);
   const body = bidBody(auction.id);
+  const key = randomUUID();
 
-  const first = await (await postBid(body)).json();
-  const response = await postBid(body);
+  const first = await (await postBid(body, { key })).json();
+  const response = await postBid(body, { key });
   const retry = await response.json();
 
   assert.equal(response.status, 201, 'a replay keeps the status of the original');
@@ -69,9 +70,10 @@ test('a retried bid answers with the original result, marked as a replay', async
 test('the same key with a different amount answers 409', async () => {
   const auction = await createAuction(pool);
   const body = bidBody(auction.id);
-  await postBid(body);
+  const key = randomUUID();
+  await postBid(body, { key });
 
-  const response = await postBid({ ...body, amount: 999999 });
+  const response = await postBid({ ...body, amount: 999999 }, { key });
   assert.equal(response.status, 409);
   assert.equal((await response.json()).error, 'idempotency_key_reused');
 });
@@ -91,15 +93,15 @@ test('a fractional amount answers 400 without reaching the database', async () =
 test('an amount in exponent notation answers 400', async () => {
   const auction = await createAuction(pool);
   const response = await postBid(
-    `{"auction_id":"${auction.id}","user_id":"${newUserId()}","amount":1e999,"idempotency_key":"k"}`,
-    true,
+    `{"auction_id":"${auction.id}","user_id":"${newUserId()}","amount":1e999}`,
+    { raw: true },
   );
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error, 'invalid_amount');
 });
 
 test('a malformed JSON body answers 400 rather than 500', async () => {
-  const response = await postBid('{"amount":', true);
+  const response = await postBid('{"amount":', { raw: true });
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error, 'invalid_json');
 });
@@ -124,4 +126,26 @@ test("the brief's exact three fields are accepted over HTTP", async () => {
 
   assert.equal(response.status, 201);
   assert.equal((await response.json()).outcome, 'ACCEPTED_LEADING');
+});
+
+test('an idempotency key sent in the body is refused, pointing at the header', async () => {
+  const auction = await createAuction(pool);
+  const response = await postBid({ ...bidBody(auction.id), idempotency_key: 'k1' });
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error, 'idempotency_key_in_body');
+  assert.match(body.message, /Idempotency-Key header/);
+});
+
+test('a quoted header key and a bare one are the same key', async () => {
+  const auction = await createAuction(pool);
+  const body = bidBody(auction.id);
+
+  const first = await (await postBid(body, { key: 'shared-key' })).json();
+  const retry = await (await postBid(body, { key: '"shared-key"' })).json();
+
+  assert.equal(first.replayed, false);
+  assert.equal(retry.replayed, true);
+  assert.equal(retry.seq, first.seq);
 });
