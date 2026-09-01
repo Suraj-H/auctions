@@ -1,0 +1,11 @@
+{
+  "name": "auctions",
+  "version": "1.0.0",
+  "description": "Auction bidding service - POST /bid",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test test/",
+    "test:unit": "node --test test/resolver.test.js"
+  }
+}

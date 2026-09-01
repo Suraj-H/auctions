@@ -1,0 +1,9 @@
+node_modules/
+DECISIONS.md
+
+# NewArtX's own document — not ours to publish
+NewArtX_TakeHome_Assignment.docx
+
+.env
+*.log
+.DS_Store
