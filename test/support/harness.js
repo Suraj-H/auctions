@@ -78,23 +78,23 @@ export async function auditLedger(pool, auctionId, storm) {
 }
 
 /**
- * Keep bidding for a fixed duration rather than firing a fixed burst.
+ * Bid continuously until told to stop.
  *
- * A burst finishes as fast as the machine allows, so anything timed against it
- * — like closing the auction part-way through — lands at an unpredictable point
- * and can miss entirely. A stream runs for a wall-clock duration instead: a slow
- * machine simply places fewer bids, but traffic is still flowing at any instant
- * inside the window. That is what makes a mid-flight close testable.
+ * Deliberately not bounded by a duration. A duration has to be guessed against
+ * however long the caller takes to reach the moment it cares about, and under
+ * contention that guess runs out first — leaving no traffic on the far side of
+ * whatever was being tested. The caller stops it when its own preconditions are
+ * met, so nothing depends on the clock. maxMs is a backstop against a hang, not
+ * a schedule.
  */
-export async function streamBids(
-  repository, auctionId, { durationMs = 900, concurrency = 40, startCents = 1000 } = {},
-) {
-  const deadline = Date.now() + durationMs;
+export function streamBids(repository, auctionId, { concurrency = 40, startCents = 1000, maxMs = 30_000 } = {}) {
   const results = [];
+  const deadline = Date.now() + maxMs;
   let nth = 0;
+  let running = true;
 
   const worker = async () => {
-    while (Date.now() < deadline) {
+    while (running && Date.now() < deadline) {
       const attempt = {
         userId: newUserId(),
         amountCents: startCents + nth++ * 100,
@@ -109,10 +109,11 @@ export async function streamBids(
     }
   };
 
-  await Promise.all(Array.from({ length: concurrency }, worker));
-  return {
+  const done = Promise.all(Array.from({ length: concurrency }, worker)).then(() => ({
     results,
     accepted: results.filter((r) => isAccepted(r.outcome)),
     writeErrors: results.filter((r) => r.error),
-  };
+  }));
+
+  return { stop: () => { running = false; }, done };
 }

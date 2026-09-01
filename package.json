@@ -15,7 +15,8 @@
     "db:reset": "npm run db:down && npm run db:up && npm run db:migrate",
     "test:concurrency": "node --test test/concurrency.test.js",
     "start": "node src/server.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "postman:env": "node scripts/postman-env.js"
   },
   "dependencies": {
     "express": "^5.2.1",

@@ -107,6 +107,37 @@ Request 2 is the one worth looking at: it carries no idempotency key, is
 byte-identical to request 1, and comes back as a replay of the original decision
 rather than a fresh judgement.
 
+### Postman
+
+`postman/auctions.postman_collection.json` runs one auction start to finish — 26
+requests over 8 folders, every one asserting its own outcome, so a green run is an
+acceptance suite rather than a set of requests that merely returned something.
+
+```bash
+npm run db:up && npm run db:migrate
+npm start                  # in another shell
+npm run postman:env        # seeds a fresh auction, writes the environment file
+```
+
+Import the collection and `postman/auctions.postman_environment.json`, select the
+`auctions — local` environment, and Run. Headless:
+
+```bash
+newman run postman/auctions.postman_collection.json \
+  -e postman/auctions.postman_environment.json
+```
+
+**Re-run `npm run postman:env` before every run.** The collection asserts exact
+sequence numbers and prices, so it needs an auction nobody has bid on. The first
+request checks precisely that and fails by name if you forget. It carries a
+throwaway `{{$guid}}` key for a reason worth knowing: without one, the fingerprint
+fallback would replay the previous run's answer and cheerfully report a fresh
+auction on a dirty one — the guard would be defeated by the mechanism it sits
+beside.
+
+The environment file is generated and gitignored; its ids point at rows in
+whichever database wrote it.
+
 ---
 
 ## Data model, and why

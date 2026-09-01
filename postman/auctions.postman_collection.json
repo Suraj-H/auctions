@@ -1,0 +1,1030 @@
+{
+  "info": {
+    "_postman_id": "9d5c517e-3003-46f8-9530-45d725bee8d5",
+    "name": "Auctions — full bidding lifecycle",
+    "description": "A single auction run start to finish against POST /bid.\n\nBefore each run:\n\n1. `npm run db:up && npm run db:migrate`\n2. `npm start`\n3. `npm run postman:env` — seeds a fresh auction and rewrites the environment\n4. Import both files, select the \"auctions — local\" environment, Run.\n\nEvery request asserts its own outcome, so a green run is a passing acceptance suite rather than a set of requests that merely returned something. The collection asserts exact sequence numbers and prices, so re-run step 3 before every run — bidding twice into the same auction will not reproduce them.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0 — Precondition",
+      "item": [
+        {
+          "name": "01. The auction is fresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is REJECTED_BELOW_INCREMENT\", () => pm.expect(body.outcome).to.eql(\"REJECTED_BELOW_INCREMENT\"));",
+                  "pm.test(\"current top is 0\", () => pm.expect(body.currentTopCents).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A 1-paisa bid on an untouched auction: refused for being under the increment, and reporting a current top of zero. If this fails, the environment is stale — re-run `npm run postman:env`.\n\nIt carries a throwaway {{$guid}} key deliberately. With no key the fingerprint fallback would replay the previous run's answer and report a fresh auction even on a dirty one — the guard would be defeated by the mechanism it sits beside."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 — Opening the auction",
+      "item": [
+        {
+          "name": "02. Alice opens at 500.00",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"current top is 50000\", () => pm.expect(body.currentTopCents).to.eql(50000));",
+                  "pm.test(\"replayed is false\", () => pm.expect(body.replayed).to.eql(false));",
+                  "pm.collectionVariables.set(\"seqAlice\", body.seq);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{alice}}\",\n  \"amount\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "First bid on an empty auction. Nothing to beat, so it leads."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 — Only strictly higher bids win",
+      "item": [
+        {
+          "name": "03. Bob bids 400.00 — below the top",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is REJECTED_NOT_HIGHER\", () => pm.expect(body.outcome).to.eql(\"REJECTED_NOT_HIGHER\"));",
+                  "pm.test(\"current top is 50000\", () => pm.expect(body.currentTopCents).to.eql(50000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 40000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Refused, but the request itself succeeded — 200, with the reason in the body. Status codes carry transport semantics only."
+          }
+        },
+        {
+          "name": "04. Bob bids exactly 500.00 — equal is not higher",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is REJECTED_NOT_HIGHER\", () => pm.expect(body.outcome).to.eql(\"REJECTED_NOT_HIGHER\"));",
+                  "pm.test(\"current top is 50000\", () => pm.expect(body.currentTopCents).to.eql(50000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 50000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The rule is strictly higher. An equal bid loses."
+          }
+        },
+        {
+          "name": "05. Bob bids 500.50 — higher, but under the increment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is REJECTED_BELOW_INCREMENT\", () => pm.expect(body.outcome).to.eql(\"REJECTED_BELOW_INCREMENT\"));",
+                  "pm.test(\"current top is 50000\", () => pm.expect(body.currentTopCents).to.eql(50000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 50050\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Above the top but short of the 1.00 minimum increment, so it is refused for a different and distinguishable reason."
+          }
+        },
+        {
+          "name": "06. Bob bids 600.00 — takes the lead",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"current top is 60000\", () => pm.expect(body.currentTopCents).to.eql(60000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 60000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Clears both gates."
+          }
+        },
+        {
+          "name": "07. Alice bids 700.00 — takes it back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"current top is 70000\", () => pm.expect(body.currentTopCents).to.eql(70000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{alice}}\",\n  \"amount\": 70000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 — Retries and idempotency",
+      "item": [
+        {
+          "name": "08. Carol bids 800.00 with an Idempotency-Key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"current top is 80000\", () => pm.expect(body.currentTopCents).to.eql(80000));",
+                  "pm.test(\"replayed is false\", () => pm.expect(body.replayed).to.eql(false));",
+                  "pm.collectionVariables.set(\"seqCarol\", body.seq);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{retryKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{carol}}\",\n  \"amount\": 80000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A normal bid that happens to carry a retry key."
+          }
+        },
+        {
+          "name": "09. The same request again — a network retry",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"current top is 80000\", () => pm.expect(body.currentTopCents).to.eql(80000));",
+                  "pm.test(\"replayed is true\", () => pm.expect(body.replayed).to.eql(true));",
+                  "pm.test(\"same seq as the original\", () => pm.expect(body.seq).to.eql(Number(pm.collectionVariables.get(\"seqCarol\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{retryKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{carol}}\",\n  \"amount\": 80000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "This is the case the whole layer exists for. Without it the retry would be judged afresh, found not strictly higher than Carol’s own 800.00, and refused — telling her she lost an auction she is winning. Same seq, same price, replayed: true."
+          }
+        },
+        {
+          "name": "10. The same key with a different amount",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is idempotency_key_reused\", () => pm.expect(body.error).to.eql(\"idempotency_key_reused\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{retryKey}}"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{carol}}\",\n  \"amount\": 99999\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A retry that changed its mind is not a retry. Refused outright, with no state change."
+          }
+        },
+        {
+          "name": "11. The same key, RFC-quoted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"replayed is true\", () => pm.expect(body.replayed).to.eql(true));",
+                  "pm.test(\"same seq as the original\", () => pm.expect(body.seq).to.eql(Number(pm.collectionVariables.get(\"seqCarol\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "\"{{retryKey}}\""
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{carol}}\",\n  \"amount\": 80000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The IETF draft types the header as a quoted structured string; Stripe and curl send it bare. Both spellings must mean one key, or an RFC-following client and a Stripe-following client send the same retry and get two bids."
+          }
+        },
+        {
+          "name": "12. Alice bids 850.00 with no key at all",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"current top is 85000\", () => pm.expect(body.currentTopCents).to.eql(85000));",
+                  "pm.test(\"replayed is false\", () => pm.expect(body.replayed).to.eql(false));",
+                  "pm.collectionVariables.set(\"seqNoKey\", body.seq);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{alice}}\",\n  \"amount\": 85000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Exactly the body the brief specifies, no header."
+          }
+        },
+        {
+          "name": "13. That same body again — replayed anyway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_LEADING\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_LEADING\"));",
+                  "pm.test(\"replayed is true\", () => pm.expect(body.replayed).to.eql(true));",
+                  "pm.test(\"same seq as the original\", () => pm.expect(body.seq).to.eql(Number(pm.collectionVariables.get(\"seqNoKey\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{alice}}\",\n  \"amount\": 85000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "With no key the request fingerprint becomes the key, so the brief’s contract is still retry-safe. Weaker than a real key: a deliberate resend is byte-identical to a retry and replays too."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 — Bidding on your own top bid",
+      "item": [
+        {
+          "name": "14. Alice, already leading, raises herself to 900.00",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is ACCEPTED_SELF_RAISE\", () => pm.expect(body.outcome).to.eql(\"ACCEPTED_SELF_RAISE\"));",
+                  "pm.test(\"current top is 90000\", () => pm.expect(body.currentTopCents).to.eql(90000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{alice}}\",\n  \"amount\": 90000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Accepted, and typed separately. Refusing would block the case where the reserve is not yet met and a self-raise is the only path to a sale — and would make a refused self-bid indistinguishable from a lost one to anyone reading the ledger later."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 — Requests that never reach the auction",
+      "item": [
+        {
+          "name": "15. A fractional amount",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is invalid_amount\", () => pm.expect(body.error).to.eql(\"invalid_amount\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 1.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Money is an integer count of minor units."
+          }
+        },
+        {
+          "name": "16. An amount in exponent notation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is invalid_amount\", () => pm.expect(body.error).to.eql(\"invalid_amount\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"auction_id\":\"{{auctionId}}\",\"user_id\":\"{{bob}}\",\"amount\":1e999}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "JSON.parse turns 1e999 into Infinity, which fails the same safe-integer check — so exponent notation needs no rule of its own."
+          }
+        },
+        {
+          "name": "17. An amount past 2^53",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is invalid_amount\", () => pm.expect(body.error).to.eql(\"invalid_amount\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 9007199254740992\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Beyond this, JSON numbers stop being exact."
+          }
+        },
+        {
+          "name": "18. An amount sent as a string",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is invalid_amount\", () => pm.expect(body.error).to.eql(\"invalid_amount\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": \"90000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "19. A negative amount",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is invalid_amount\", () => pm.expect(body.error).to.eql(\"invalid_amount\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": -100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "20. A malformed auction id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is invalid_auction_id\", () => pm.expect(body.error).to.eql(\"invalid_auction_id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"not-a-uuid\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 90000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "21. An idempotency key sent in the body",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is idempotency_key_in_body\", () => pm.expect(body.error).to.eql(\"idempotency_key_in_body\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 91000,\n  \"idempotency_key\": \"k1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Refused rather than ignored. Ignoring it would leave the caller believing they held a guarantee they had actually fallen back from."
+          }
+        },
+        {
+          "name": "22. A malformed JSON body",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is invalid_json\", () => pm.expect(body.error).to.eql(\"invalid_json\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"amount\":",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "400, not a 500 and not an HTML error page."
+          }
+        },
+        {
+          "name": "23. A bid on an auction that does not exist",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is auction_not_found\", () => pm.expect(body.error).to.eql(\"auction_not_found\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{missingAuctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 90000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "24. An unknown route",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is not_found\", () => pm.expect(body.error).to.eql(\"not_found\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/nope",
+            "description": "JSON, not HTML."
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 — After the hammer falls",
+      "item": [
+        {
+          "name": "25. A bid on an auction whose deadline has passed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is REJECTED_AUCTION_CLOSED\", () => pm.expect(body.outcome).to.eql(\"REJECTED_AUCTION_CLOSED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{closedAuctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 500000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "This auction’s status still reads OPEN — no closer job has run. The clock predicate inside the accepting statement is the gate, so it refuses late bids on its own. The status flag is derived and eventual."
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 — Final state",
+      "item": [
+        {
+          "name": "26. A deliberately low bid, to read the price back",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"outcome is REJECTED_NOT_HIGHER\", () => pm.expect(body.outcome).to.eql(\"REJECTED_NOT_HIGHER\"));",
+                  "pm.test(\"current top is 90000\", () => pm.expect(body.currentTopCents).to.eql(90000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/bid",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auction_id\": \"{{auctionId}}\",\n  \"user_id\": \"{{bob}}\",\n  \"amount\": 1000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "There is no GET endpoint — the brief asks only for POST /bid — but a refused bid reports the current top, so this reads the final price. Alice wins at 900.00."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "seqAlice",
+      "value": ""
+    },
+    {
+      "key": "seqCarol",
+      "value": ""
+    },
+    {
+      "key": "seqNoKey",
+      "value": ""
+    }
+  ]
+}

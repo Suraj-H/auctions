@@ -5,6 +5,9 @@ SUBMISSION-NOTE.md
 # NewArtX's own document — not ours to publish
 NewArtX_TakeHome_Assignment.docx
 
+# Generated per run; its ids point at rows in whichever database made it
+postman/auctions.postman_environment.json
+
 .env
 *.log
 .DS_Store

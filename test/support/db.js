@@ -48,19 +48,25 @@ export async function createAuctionInState(pool, { topAmountCents, topUserId, mi
   return rows[0];
 }
 
-/** Resolves once `n` bids have actually been accepted on the auction. */
-export async function waitForAcceptedBids(pool, auctionId, n, timeoutMs = 10_000) {
+/** Resolves once at least `n` bids on the auction match `where`. */
+async function waitForBids(pool, auctionId, n, where, label, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const { rows } = await pool.query(
-      'SELECT count(*)::int AS n FROM bids WHERE auction_id = $1 AND seq IS NOT NULL',
+      `SELECT count(*)::int AS n FROM bids WHERE auction_id = $1 AND ${where}`,
       [auctionId],
     );
     if (rows[0].n >= n) return rows[0].n;
-    if (Date.now() > deadline) throw new Error(`only ${rows[0].n} of ${n} bids accepted in ${timeoutMs}ms`);
+    if (Date.now() > deadline) throw new Error(`only ${rows[0].n} of ${n} ${label} in ${timeoutMs}ms`);
     await new Promise((r) => setTimeout(r, 5));
   }
 }
+
+export const waitForAcceptedBids = (pool, auctionId, n, timeoutMs = 15_000) =>
+  waitForBids(pool, auctionId, n, 'seq IS NOT NULL', 'bids accepted', timeoutMs);
+
+export const waitForClosedRefusals = (pool, auctionId, n, timeoutMs = 15_000) =>
+  waitForBids(pool, auctionId, n, "outcome = 'REJECTED_AUCTION_CLOSED'", 'bids refused as closed', timeoutMs);
 
 /** Brings an auction's deadline forward to now, closing it where it stands. */
 export async function closeNow(pool, auctionId) {

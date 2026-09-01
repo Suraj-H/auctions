@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createPool } from '../src/db.js';
 import { atomicRepository } from '../src/repository.js';
-import { createAuction, readAuction, newUserId, waitForAcceptedBids, closeNow } from './support/db.js';
+import { createAuction, readAuction, newUserId, waitForAcceptedBids, waitForClosedRefusals, closeNow } from './support/db.js';
 import { stormAuction, streamBids, auditLedger } from './support/harness.js';
 
 let pool, repo;
@@ -20,23 +20,30 @@ after(() => pool.end());
  * second waited for bids to be accepted before closing, which was worse: waiting
  * consumed the burst, so barely any attempts were left to refuse.
  *
- * Bidding now runs for a wall-clock duration rather than as a burst, so waiting
- * does not exhaust it and traffic is still flowing when the deadline moves.
+ * A third assumption survived a while longer: bidding ran for a fixed 900ms, which
+ * has to be guessed against however long it takes to reach five accepted bids.
+ * Under contention that wait consumed the whole window and the stream finished
+ * before the close ever happened, leaving nothing to refuse. Both sides are now
+ * explicit waits and the stream runs until it is told to stop, so the test depends
+ * on observed state rather than on any duration.
  */
 test('no bid is accepted once the auction has ended, mid-storm', async () => {
   const auction = await createAuction(pool, { endsInMs: 60_000 });
 
-  const streaming = streamBids(repo, auction.id, { durationMs: 900 });
+  const stream = streamBids(repo, auction.id);
   await waitForAcceptedBids(pool, auction.id, 5);
   await closeNow(pool, auction.id);
+  await waitForClosedRefusals(pool, auction.id, 5);
+  stream.stop();
 
-  const storm = await streaming;
+  const storm = await stream.done;
   const audit = await auditLedger(pool, auction.id, storm);
 
   const closed = storm.results.filter((r) => r.outcome === 'REJECTED_AUCTION_CLOSED');
 
-  // Both are now structural rather than hopeful: the close does not happen until
-  // bids have been accepted, and 295 attempts remain when it does.
+  // Both are structural rather than hopeful: the run does not proceed until five
+  // bids have been accepted, and does not stop until five have been refused as
+  // closed. Neither depends on how fast the machine is.
   assert.ok(storm.accepted.length > 0, 'no bid landed before the close');
   assert.ok(closed.length > 0, 'no bid landed after the close');
 
